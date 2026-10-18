@@ -1,0 +1,22 @@
+; hand-written fixture: 2 layers, relative E
+M83
+G90
+;LAYER_CHANGE
+;Z:0.2
+;HEIGHT:0.2
+G1 Z0.2 F600
+;TYPE:External perimeter
+;WIDTH:0.45
+G1 X10 Y0 E0.5 F1200
+G1 X10 Y10 E0.5
+G1 X0 Y10 E0.5
+G1 X0 Y0 E0.5
+G1 E-0.8 F2100
+G1 X0 Y5 F6000
+G1 E0.8 F2100
+;LAYER_CHANGE
+;Z:0.4
+;HEIGHT:0.2
+G1 Z0.4 F600
+;TYPE:External perimeter
+G1 X0 Y15 E0.25 F1200
