@@ -67,6 +67,7 @@ def run_cli(
     *,
     timeout: float = 600,
     cwd: Path | None = None,
+    check: bool = True,
 ) -> CliResult:
     cmd = [str(install.console), *[str(a) for a in args]]
     try:
@@ -83,7 +84,7 @@ def run_cli(
         raise CliTimeoutError(f"PrusaSlicer no terminó en {timeout:.0f} s y se ha detenido.") from e
     warnings, errors = classify_output(proc.stdout + "\n" + proc.stderr)
     result = CliResult(cmd, proc.returncode, proc.stdout, proc.stderr, warnings, errors)
-    if proc.returncode != 0:
+    if check and proc.returncode != 0:
         detail = "\n".join(errors) or (proc.stderr or proc.stdout).strip()[-2000:]
         raise CliError(f"PrusaSlicer falló (código {proc.returncode}):\n{detail}")
     return result

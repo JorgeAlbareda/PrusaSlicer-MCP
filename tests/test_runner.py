@@ -68,3 +68,8 @@ def test_run_cli_nonzero_raises():
 def test_run_cli_timeout():
     with pytest.raises(CliTimeoutError):
         run_cli(_python_install(), ["-c", "import time; time.sleep(10)"], timeout=1)
+
+
+def test_run_cli_check_false_returns_result():
+    res = run_cli(_python_install(), ["-c", "import sys; sys.exit(1)"], check=False)
+    assert res.returncode == 1
