@@ -1,0 +1,11 @@
+; hand-written fixture: absolute E
+M82
+G90
+;LAYER_CHANGE
+;Z:0.2
+;HEIGHT:0.2
+G92 E99
+G1 X10 E100 F1200
+G1 E99 F2100
+G1 E100
+G1 X20 E100 F6000

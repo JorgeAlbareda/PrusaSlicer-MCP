@@ -55,18 +55,23 @@ def ensure_text_gcode(path: Path) -> None:
             )
 
 
-def read_effective_config(gcode: Path) -> dict[str, str]:
+def read_tail_text(gcode: Path) -> str:
+    """Last part of the file, from at least one chunk before the config block to the end."""
     ensure_text_gcode(gcode)
     with open(gcode, "rb") as f:
         f.seek(0, 2)
         pos = f.tell()
         tail = b""
-        while pos > 0 and BEGIN.encode() not in tail:
+        while pos > 0 and (BEGIN.encode() not in tail or len(tail) < CHUNK):
             step = min(CHUNK, pos)
             pos -= step
             f.seek(pos)
             tail = f.read(step) + tail
-    text = tail.decode("utf-8", errors="replace")
+    return tail.decode("utf-8", errors="replace")
+
+
+def read_effective_config(gcode: Path) -> dict[str, str]:
+    text = read_tail_text(gcode)
     start = text.rfind(BEGIN)
     if start < 0:
         raise PrusaMcpError(f"'{gcode}' no contiene la configuración de PrusaSlicer al final.")
