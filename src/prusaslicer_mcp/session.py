@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import copy
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from prusaslicer_mcp.errors import PrusaMcpError
 
 MODEL_EXTENSIONS = {".stl", ".3mf", ".obj", ".step", ".stp", ".amf"}
+_KEY_RE = re.compile(r"[A-Za-z0-9_]+")
 
 
 @dataclass
@@ -118,7 +120,11 @@ class Session:
                     inst.fixed = False
 
     def set_setting(self, key: str, value: str) -> None:
-        self.overrides[key] = str(value)
+        if not _KEY_RE.fullmatch(key or ""):
+            raise PrusaMcpError(f"Nombre de ajuste no válido: {key!r}. Usa el nombre exacto de PrusaSlicer, p. ej. fill_density.")
+        # PrusaSlicer stores multi-line values (custom G-code) with literal "\n"; a raw newline would
+        # break the overrides .ini, so real newlines are escaped here.
+        self.overrides[key] = re.sub(r"\r\n|\r|\n", r"\\n", str(value))
 
     def reset_setting(self, key: str) -> None:
         self.overrides.pop(key, None)

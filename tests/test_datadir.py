@@ -133,3 +133,25 @@ def test_example_kobra_profiles_load_cleanly(install, kobra_datadir, tmp_path):
     assert out.exists()
     assert not [w for w in res.warnings if "incorrect keys" in w]
     assert res.errors == []
+
+
+def test_resolve_user_preset_ignores_inherits(tmp_path):
+    # PrusaSlicer loads a user preset as defaults + its own keys; `inherits` is metadata only.
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "vendor" / "V.ini").write_text("[print:Base]\nlayer_height = 0.3\nperimeters = 4\n", encoding="utf-8")
+    (tmp_path / "print").mkdir()
+    (tmp_path / "print" / "Mine.ini").write_text("inherits = Base\nfill_density = 25%\n", encoding="utf-8")
+    assert dd.resolve_preset_values(None, tmp_path, "print", "Mine") == {"fill_density": "25%"}
+
+
+def test_import_bundle_flattens_from_installed_system_parent(tmp_path):
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "vendor" / "V.ini").write_text("[print:Base]\nlayer_height = 0.3\nperimeters = 4\n", encoding="utf-8")
+    dd.import_bundle(tmp_path, "[print:Child]\ninherits = Base\nfill_density = 25%\n")
+    child = (tmp_path / "print" / "Child.ini").read_text(encoding="utf-8")
+    assert "layer_height = 0.3" in child and "perimeters = 4" in child and "fill_density = 25%" in child
+
+
+def test_import_bundle_missing_parent_warns_defaults(tmp_path):
+    _, warnings = dd.import_bundle(tmp_path, "[print:Child]\ninherits = Nope\nfill_density = 25%\n")
+    assert any("valores por defecto" in w for w in warnings)

@@ -51,3 +51,21 @@ def test_pack_centers_group_when_nothing_fixed():
     ys = [f.center[1] for f in placed]
     assert (min(xs) + max(xs)) / 2 == pytest.approx(125)
     assert (min(ys) + max(ys)) / 2 == pytest.approx(105)
+
+
+def _circle(r=100, n=36):
+    import math
+    return [(r * math.cos(2 * math.pi * i / n), r * math.sin(2 * math.pi * i / n)) for i in range(n)]
+
+
+def test_validate_polygon_bed():
+    poly = _circle()
+    bed = (-100, -100, 100, 100)
+    assert validate([fp(1, 20, 20, (0, 0))], bed, 6, polygon=poly) == []
+    assert any("fuera" in p for p in validate([fp(1, 20, 20, (-85, -85))], bed, 6, polygon=poly))
+
+
+def test_pack_stays_inside_polygon_bed():
+    poly = _circle()
+    placed = pack([fp(i, 20, 20) for i in range(6)], (-100, -100, 100, 100), 6, polygon=poly)
+    assert validate(placed, (-100, -100, 100, 100), 6, polygon=poly) == []

@@ -103,3 +103,16 @@ def test_settings_and_profiles():
     s.reset_setting("layer_height")
     d = s.to_dict()
     assert d["printer"] == "P" and d["filaments"] == ["F"] and d["overrides"] == {}
+
+
+def test_set_setting_escapes_real_newlines():
+    # Final review I4: a raw newline would break the overrides .ini.
+    s = Session()
+    s.set_setting("start_gcode", "G28\nG1 Z5\r\n")
+    assert s.overrides["start_gcode"] == r"G28\nG1 Z5\n"
+
+
+@pytest.mark.parametrize("key", ["post_process ", "a=b", "fill density", "", "x\ny"])
+def test_set_setting_rejects_bad_keys(key):
+    with pytest.raises(PrusaMcpError):
+        Session().set_setting(key, "1")

@@ -15,6 +15,7 @@ from prusaslicer_mcp.errors import BinaryGcodeError, PrusaMcpError
 BEGIN = "; prusaslicer_config = begin"
 END = "; prusaslicer_config = end"
 CHUNK = 1 << 20
+MAX_TAIL = 16 << 20
 
 CRITICAL_KEYS: tuple[str, ...] = (
     "bed_shape",
@@ -56,18 +57,34 @@ def ensure_text_gcode(path: Path) -> None:
 
 
 def read_tail_text(gcode: Path) -> str:
-    """Last part of the file, from at least one chunk before the config block to the end."""
+    """Last part of the file, from at least one chunk before the config block to the end.
+
+    The backward scan is capped at MAX_TAIL bytes: G-code without a PrusaSlicer config block
+    (other slicers, stripped by post-processing) must not be read whole into memory.
+    """
     ensure_text_gcode(gcode)
+    marker = BEGIN.encode()
+    chunks: list[bytes] = []
+    size = 0
+    found = False
     with open(gcode, "rb") as f:
         f.seek(0, 2)
         pos = f.tell()
-        tail = b""
-        while pos > 0 and (BEGIN.encode() not in tail or len(tail) < CHUNK):
-            step = min(CHUNK, pos)
+        while pos > 0 and size < MAX_TAIL and not (found and size >= CHUNK):
+            step = min(CHUNK, pos, MAX_TAIL - size)
             pos -= step
             f.seek(pos)
-            tail = f.read(step) + tail
-    return tail.decode("utf-8", errors="replace")
+            chunks.append(f.read(step))
+            size += step
+            # the marker may straddle two chunks: check the newest chunk joined to the previous one
+            window = chunks[-1] + (chunks[-2][: len(marker)] if len(chunks) > 1 else b"")
+            found = found or marker in window
+    if not found:
+        raise PrusaMcpError(
+            f"'{gcode}' no contiene la configuración de PrusaSlicer al final (¿G-code de otro laminador "
+            "o modificado por un postprocesado?)."
+        )
+    return b"".join(reversed(chunks)).decode("utf-8", errors="replace")
 
 
 def read_effective_config(gcode: Path) -> dict[str, str]:

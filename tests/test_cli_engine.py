@@ -210,7 +210,9 @@ def test_save_profile_as_splits_by_kind(kobra, kobra_datadir):
     names = sorted(p.parent.name for p in paths)
     assert names == ["filament", "print"]
     text = (kobra_datadir / "print" / "Mio.ini").read_text(encoding="utf-8")
-    assert "fill_density = 25%" in text and f"inherits = {KOBRA[1]}" in text
+    # flattened: every print key of the parent, with the change applied (inherits is only metadata)
+    assert "fill_density = 25%" in text and "perimeter_speed = 230" in text
+    assert "\ntemperature = " not in text  # filament keys go to the filament preset
 
 
 def test_save_profile_as_rejects_unknown_key(kobra):
@@ -231,3 +233,54 @@ def test_v2_only_methods_raise(kobra):
 def test_model_info_cube(kobra):
     info = kobra.add_model(CUBE)["model_info"]
     assert float(info["size_x"]) == pytest.approx(20)
+
+
+def test_saved_profile_keeps_unchanged_parent_values(kobra):
+    # Final review C1: a sparse preset loads as PrusaSlicer defaults + changes.
+    kobra.set_setting("fill_density", "25%")
+    kobra.save_profile_as("Mio")
+    kobra.reset_setting("fill_density")
+    kobra.select_profiles(KOBRA[0], "Mio", [KOBRA[2]])
+    kobra.add_model(CUBE)
+    cfg = read_effective_config(kobra.slice().gcode_path)
+    assert cfg["fill_density"] == "25%"
+    assert cfg["layer_height"] == "0.2" and cfg["first_layer_height"] == "0.24"
+    assert cfg["perimeter_speed"] == "230"
+
+
+def test_save_profile_as_rejects_system_preset_name(mk4s):
+    mk4s.set_setting("fill_density", "25%")
+    with pytest.raises(PrusaMcpError) as e:
+        mk4s.save_profile_as(MK4S[1])
+    assert "sistema" in e.value.message
+
+
+def test_object_outside_round_bed_rejected(kobra):
+    # Final review I1: PrusaSlicer silently drops instances outside a non-rectangular bed.
+    circle = ",".join(f"{100 * __import__('math').cos(a / 18 * 3.14159265):.3f}x"
+                      f"{100 * __import__('math').sin(a / 18 * 3.14159265):.3f}" for a in range(36))
+    kobra.set_setting("bed_shape", circle)
+    kobra.add_model(CUBE, copies=2)
+    kobra.place_instance(1, 0, 0, 0)
+    kobra.place_instance(1, 1, -85, -85)
+    with pytest.raises(PrusaMcpError) as e:
+        kobra.slice()
+    assert "fuera" in e.value.message
+
+
+def test_publish_across_directories(tmp_path):
+    src = tmp_path / "a" / "x.gcode"
+    src.parent.mkdir()
+    src.write_text("G28\n")
+    dst = tmp_path / "b" / "y.gcode"
+    ce.publish_file(src, dst)
+    assert dst.read_text() == "G28\n" and not src.exists()
+
+
+def test_publish_oserror_is_clear(tmp_path, monkeypatch):
+    src = tmp_path / "x.gcode"
+    src.write_text("G28\n")
+    monkeypatch.setattr(ce.shutil, "copy2", lambda *a, **k: (_ for _ in ()).throw(OSError(28, "No space left")))
+    with pytest.raises(PrusaMcpError) as e:
+        ce.publish_file(src, tmp_path / "out" / "y.gcode")
+    assert "No se pudo guardar" in e.value.message and src.exists()

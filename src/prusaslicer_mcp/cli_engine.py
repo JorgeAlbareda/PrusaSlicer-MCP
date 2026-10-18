@@ -16,6 +16,7 @@ from prusaslicer_mcp.datadir import (
     list_compatible_profiles,
     list_printers,
     resolve_preset_values,
+    system_preset_values,
     save_user_preset,
 )
 from prusaslicer_mcp.engine import SliceResult
@@ -23,11 +24,11 @@ from prusaslicer_mcp.errors import CliError, EngineCapabilityError, PrusaMcpErro
 from prusaslicer_mcp.gcode.metrics import get_gcode_metrics
 from prusaslicer_mcp.ini import dump_flat, load_flat_file
 from prusaslicer_mcp.install import SlicerInstall, is_supported_version
-from prusaslicer_mcp.placement import Footprint, pack, parse_bed_shape, validate
+from prusaslicer_mcp.placement import Footprint, pack, parse_bed_polygon, parse_bed_shape, validate
 from prusaslicer_mcp.preset_keys import classify_key
 from prusaslicer_mcp.runner import run_cli
 from prusaslicer_mcp.session import PlateObject, Session
-from prusaslicer_mcp.verify import build_expected, expected_ids, read_effective_config, verify
+from prusaslicer_mcp.verify import build_expected, compare, expected_ids, read_effective_config, verify
 
 V2_ONLY = "Requiere el motor GUI (v2)"
 DEFAULT_SPACING = 6.0
@@ -188,8 +189,7 @@ class CliEngine:
             detail = "; ".join(f"{m.key}: esperado {m.expected!r}, obtenido {m.actual!r}" for m in v.mismatches)
             raise VerificationError(f"El G-code no usa la configuración pedida ({detail}). Revisión en {out}", v)
         final = Path(output) if output else self._default_output(s)
-        final.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(out, final)
+        publish_file(out, final)
         self._last_config = read_effective_config(final)
         warnings = list(res.warnings)
         warnings += self._multi_extruder_warning(s)
@@ -217,18 +217,33 @@ class CliEngine:
         unknown = [k for k in chosen if classify_key(k) is None]
         if unknown:
             raise PrusaMcpError(f"Claves que no pertenecen a ningún tipo de perfil: {', '.join(unknown)}.")
-        parents = {"print": s.print_profile, "filament": s.filaments[0], "printer": s.printer}
-        by_kind: dict[str, dict[str, str]] = {}
-        for k, v in chosen.items():
-            by_kind.setdefault(classify_key(k), {})[k] = v
+        kinds = sorted({classify_key(k) for k in chosen})
+        taken = [k for k in kinds if system_preset_values(self.datadir, k, name) is not None]
+        if taken:
+            raise PrusaMcpError(
+                f"'{name}' es el nombre de un perfil de sistema ({', '.join(taken)}); PrusaSlicer ignoraría el tuyo. "
+                "Elige otro nombre."
+            )
+        # PrusaSlicer loads a user preset as built-in defaults + the file (`inherits` is only
+        # metadata), so the saved preset must hold every key of its kind, not just the changes.
+        job = self._new_job()
+        changes = job / "changes.ini"
+        changes.write_text(dump_flat(chosen), encoding="utf-8")
+        full_ini = job / "full.ini"
+        run_cli(self.install, ["--datadir", self.datadir, "--printer-profile", s.printer, "--print-profile",
+                               s.print_profile, "--material-profile", s.filaments[0], "--load", changes,
+                               "--save", full_ini])
+        full = load_flat_file(full_ini)
         paths = [
-            save_user_preset(self.datadir, kind, name, {"inherits": parents[kind], **values}, overwrite=overwrite)
-            for kind, values in sorted(by_kind.items())
+            save_user_preset(self.datadir, kind, name, {k: v for k, v in full.items() if classify_key(k) == kind},
+                             overwrite=overwrite)
+            for kind in kinds
         ]
         self._probe(
-            name if "printer" in by_kind else s.printer,
-            name if "print" in by_kind else s.print_profile,
-            name if "filament" in by_kind else s.filaments[0],
+            name if "printer" in kinds else s.printer,
+            name if "print" in kinds else s.print_profile,
+            name if "filament" in kinds else s.filaments[0],
+            expected={k: full[k] for k in (*chosen, "layer_height", "bed_shape", "temperature") if k in full},
         )
         return paths
 
@@ -325,6 +340,7 @@ class CliEngine:
 
     def _resolve_placements(self, s: Session, printer_values: dict[str, str]) -> list[Footprint]:
         bed = parse_bed_shape(printer_values["bed_shape"])
+        polygon = parse_bed_polygon(printer_values["bed_shape"])
         try:
             spacing = float(printer_values.get("duplicate_distance", DEFAULT_SPACING))
         except ValueError:
@@ -334,8 +350,8 @@ class CliEngine:
             _, info = self._transformed_info(obj)
             for n, inst in enumerate(obj.instances):
                 footprints.append(Footprint(obj.id, n, float(info["size_x"]), float(info["size_y"]), inst.center, inst.fixed))
-        placed = pack(footprints, bed, spacing)
-        problems = validate(placed, bed, spacing)
+        placed = pack(footprints, bed, spacing, polygon)
+        problems = validate(placed, bed, spacing, polygon)
         if problems:
             raise PrusaMcpError("Problemas de colocación en la cama:\n" + "\n".join(problems))
         return placed
@@ -374,14 +390,35 @@ class CliEngine:
             return ["Perfiles multiextrusor no soportados en esta versión: se ha laminado con un solo extrusor."]
         return []
 
-    def _probe(self, printer: str, print_profile: str, filament: str) -> None:
-        """Slice a tiny cube with the given presets to prove PrusaSlicer accepts them."""
+    def _probe(self, printer: str, print_profile: str, filament: str, expected: dict[str, str]) -> None:
+        """Slice a tiny cube with the given presets and check PrusaSlicer really applies `expected`."""
         job = self._new_job()
         cube = job / "probe.stl"
         cube.write_text(_PROBE_CUBE, encoding="utf-8")
         out = job / "probe.gcode"
+        overrides = job / "probe-overrides.ini"
+        overrides.write_text("post_process = \n", encoding="utf-8")
         run_cli(self.install, ["--datadir", self.datadir, "--printer-profile", printer, "--print-profile", print_profile,
-                               "--material-profile", filament, "--no-binary-gcode", "--export-gcode", "-o", out, cube])
+                               "--material-profile", filament, "--load", overrides, "--no-binary-gcode",
+                               "--export-gcode", "-o", out, cube])
         if not out.exists():
             raise PrusaMcpError("Se guardó el perfil, pero PrusaSlicer no consigue laminar con él.")
+        mismatches = compare(read_effective_config(out), expected)
+        if mismatches:
+            detail = "; ".join(f"{m.key}: esperado {m.expected!r}, obtenido {m.actual!r}" for m in mismatches)
+            raise PrusaMcpError(f"Se guardó el perfil, pero PrusaSlicer no lo aplica como se esperaba ({detail}).")
         shutil.rmtree(job, ignore_errors=True)
+
+
+def publish_file(src: Path, dst: Path) -> None:
+    """Move a finished file to its final place, also across drives (temp → SD card/USB)."""
+    dst = Path(dst)
+    tmp = dst.with_name(f".{dst.name}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dst)
+    except OSError as e:
+        tmp.unlink(missing_ok=True)
+        raise PrusaMcpError(f"No se pudo guardar '{dst}': {e}. El G-code verificado sigue en '{src}'.") from e
+    Path(src).unlink(missing_ok=True)

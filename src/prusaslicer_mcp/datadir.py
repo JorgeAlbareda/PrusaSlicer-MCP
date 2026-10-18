@@ -159,9 +159,19 @@ def import_bundle(
                 continue
             missing: list[str] = []
             values = _resolve(sections, name, missing)
-            if missing:
-                values["inherits"] = "; ".join(missing)
-                warnings.append(f"{kind} '{name}': hereda de '{'; '.join(missing)}', que no está en el bundle.")
+            # A user preset is loaded as defaults + its own keys, so parents must be flattened in.
+            unresolved = []
+            for parent in missing:
+                parent_values = system_preset_values(datadir, kind, parent)
+                if parent_values is None:
+                    unresolved.append(parent)
+                else:
+                    values = {**parent_values, **values}
+            if unresolved:
+                warnings.append(
+                    f"{kind} '{name}': hereda de '{'; '.join(unresolved)}', que no está en el bundle ni instalado; "
+                    "los ajustes que no defina usarán los valores por defecto de PrusaSlicer."
+                )
             dropped = [k for k in _IMPORT_DROP if k in values]
             if not allow_post_process and values.get("post_process"):
                 dropped.append("post_process")
@@ -192,19 +202,17 @@ def resolve_preset_values(
 
     Keys left at PrusaSlicer defaults are absent, so callers must treat them as unknown.
     """
-    vendor = _vendor_sections(datadir, kind)
     user_file = Path(datadir) / kind / f"{name}.ini"
     if user_file.is_file():
+        # PrusaSlicer loads a user preset as built-in defaults + the file; `inherits` is metadata only.
         own = parse_flat(user_file.read_text(encoding="utf-8"))
-        result: dict[str, str] = {}
-        for parent in _parents(own):
-            for sections in vendor:
-                if parent in sections:
-                    result.update(_resolve(sections, parent, []))
-                    break
-        result.update({k: v for k, v in own.items() if k != "inherits"})
-        return result
-    for sections in vendor:
-        if name in sections:
+        return {k: v for k, v in own.items() if k != "inherits"}
+    return system_preset_values(datadir, kind, name)
+
+
+def system_preset_values(datadir: Path, kind: Kind, name: str) -> dict[str, str] | None:
+    """Values of an installed vendor (system) preset with its inheritance resolved."""
+    for sections in _vendor_sections(datadir, kind):
+        if name in sections and not name.startswith("*"):
             return _resolve(sections, name, [])
     return None
