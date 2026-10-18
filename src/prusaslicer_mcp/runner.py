@@ -68,7 +68,10 @@ def run_cli(
     timeout: float = 600,
     cwd: Path | None = None,
     check: bool = True,
+    input: str | None = None,
 ) -> CliResult:
+    """Run the console binary. stdin is never inherited: PrusaSlicer may prompt on it, and
+    under an MCP STDIO server that stream carries the protocol. `input` answers such prompts."""
     cmd = [str(install.console), *[str(a) for a in args]]
     try:
         proc = subprocess.run(
@@ -79,6 +82,7 @@ def run_cli(
             errors="replace",
             timeout=timeout,
             cwd=cwd,
+            **({"input": input} if input is not None else {"stdin": subprocess.DEVNULL}),
         )
     except subprocess.TimeoutExpired as e:
         raise CliTimeoutError(f"PrusaSlicer no terminó en {timeout:.0f} s y se ha detenido.") from e

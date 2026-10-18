@@ -68,7 +68,20 @@ def pack(footprints: list[Footprint], bed: Bed, spacing: float = 6.0) -> list[Fo
         if not done:
             f.center = None
             raise PrusaMcpError(f"No caben todas las piezas en la cama: no hay hueco para {_label(f)}.")
+    if todo and len(todo) == len(result):
+        _center_group(todo, bed)
     return result
+
+
+def _center_group(group: list[Footprint], bed: Bed) -> None:
+    """Shift a freely packed group so it sits in the middle of the bed."""
+    rects = [_rect(f, 0) for f in group]
+    gx = (min(r[0] for r in rects) + max(r[2] for r in rects)) / 2
+    gy = (min(r[1] for r in rects) + max(r[3] for r in rects)) / 2
+    dx = (bed[0] + bed[2]) / 2 - gx
+    dy = (bed[1] + bed[3]) / 2 - gy
+    for f in group:
+        f.center = (f.center[0] + dx, f.center[1] + dy)
 
 
 def validate(footprints: list[Footprint], bed: Bed, spacing: float = 6.0) -> list[str]:

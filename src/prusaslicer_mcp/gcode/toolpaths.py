@@ -187,7 +187,9 @@ def analyze_toolpaths(path: Path, filament_diameter: float | None = None) -> Too
                 dist = math.hypot(xy, nz - z)
                 t = dist / (feed / 60) if feed > 0 and dist > 0 else (abs(de) / (feed / 60) if feed > 0 else 0.0)
                 if layer is None:
-                    new_layer()
+                    # start G-code (homing, purge line) before the first layer: not part of the print
+                    x, y, z = nx, ny, nz
+                    continue
                 if t > 0 and xy > 0:
                     layer.max_vx_mm_s = max(layer.max_vx_mm_s, abs(dx) / t)
                     layer.max_vy_mm_s = max(layer.max_vy_mm_s, abs(dy) / t)

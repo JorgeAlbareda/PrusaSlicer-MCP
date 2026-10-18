@@ -73,3 +73,26 @@ def test_run_cli_timeout():
 def test_run_cli_check_false_returns_result():
     res = run_cli(_python_install(), ["-c", "import sys; sys.exit(1)"], check=False)
     assert res.returncode == 1
+
+
+def test_run_cli_never_inherits_stdin(monkeypatch):
+    # PrusaSlicer can prompt on stdin; under an MCP STDIO server that stream is the protocol.
+    import subprocess
+
+    from prusaslicer_mcp import runner
+
+    seen = {}
+    real = subprocess.run
+
+    def spy(*a, **k):
+        seen.update(k)
+        return real(*a, **k)
+
+    monkeypatch.setattr(runner.subprocess, "run", spy)
+    run_cli(_python_install(), ["-c", "pass"])
+    assert seen.get("stdin") is subprocess.DEVNULL
+
+
+def test_run_cli_input_is_fed():
+    res = run_cli(_python_install(), ["-c", "import sys; print(sys.stdin.read().strip())"], input="Y\n")
+    assert res.stdout.strip() == "Y"

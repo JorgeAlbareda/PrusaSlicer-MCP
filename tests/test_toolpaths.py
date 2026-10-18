@@ -96,3 +96,10 @@ def test_toolpaths_benchy_types(install, vendor_datadir, tmp_path):
     assert "Overhang perimeter" in r.by_type and "Bridge infill" in r.by_type
     assert r.has_type_markers and r.confidence == "high"
     assert r.time_scale > 0
+
+
+def test_preamble_moves_are_not_a_layer():
+    r = analyze_toolpaths(FIXTURES / "preamble.gcode", filament_diameter=1.75)
+    assert len(r.layers) == 1
+    assert r.layers[0].bbox == (50, 50, 60, 50)
+    assert r.layers[0].z == pytest.approx(0.2)

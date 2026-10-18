@@ -43,3 +43,11 @@ def test_validate_detects_overlap_and_out_of_bed():
     assert any("solapa" in p for p in problems)
     problems = validate([fp(1, 20, 20, (245, 100))], BED, 6)
     assert any("fuera" in p for p in problems)
+
+
+def test_pack_centers_group_when_nothing_fixed():
+    placed = pack([fp(1, 20, 20), fp(2, 20, 20)], BED, spacing=6)
+    xs = [f.center[0] for f in placed]
+    ys = [f.center[1] for f in placed]
+    assert (min(xs) + max(xs)) / 2 == pytest.approx(125)
+    assert (min(ys) + max(ys)) / 2 == pytest.approx(105)
