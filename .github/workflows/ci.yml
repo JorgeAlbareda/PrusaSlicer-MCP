@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test-windows:
+    runs-on: windows-latest
+    env:
+      PRUSASLICER_VERSION: "2.9.6"
+      PRUSASLICER_REQUIRE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Cache PrusaSlicer
+        id: cache-ps
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\prusaslicer
+          key: prusaslicer-${{ env.PRUSASLICER_VERSION }}-win64
+
+      - name: Download PrusaSlicer
+        if: steps.cache-ps.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $zip = "$env:RUNNER_TEMP\prusaslicer.zip"
+          Invoke-WebRequest "https://github.com/prusa3d/PrusaSlicer/releases/download/version_$env:PRUSASLICER_VERSION/PrusaSlicer-$env:PRUSASLICER_VERSION.zip" -OutFile $zip
+          Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\prusaslicer"
+
+      - name: Locate PrusaSlicer
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem "$env:RUNNER_TEMP\prusaslicer" -Recurse -Filter prusa-slicer-console.exe | Select-Object -First 1
+          if (-not $exe) { throw "prusa-slicer-console.exe not found" }
+          "PRUSASLICER_PATH=$($exe.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Test
+        run: uv run pytest -q
